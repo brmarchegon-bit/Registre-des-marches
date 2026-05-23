@@ -374,4 +374,240 @@ elif st.session_state.view == "detail":
     montant_actualise = montant_marche + total_avenants
     retard = days_between(m.get('dateAchevement'), m.get('dateReceptionProv'))
     retard_positif = max(0, retard) if retard else 0
-    penalites = retard_positif * (float(m.get('tauxPenalite', 1)) / 1000) * montant_marche i
+    penalites = retard_positif * (float(m.get('tauxPenalite', 1)) / 1000) * montant_marche if retard_positif and montant_marche else 0
+
+    # Alerte pénalités
+    if penalites and montant_marche:
+        seuil_pct = (penalites / montant_marche) * 100
+        if seuil_pct >= 8:
+            st.error(f"🚨 **Alerte pénalités — {seuil_pct:.1f}% du montant marché** | Pénalités cumulées : {fmt_money(penalites)}")
+
+    # Métriques
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Montant initial", fmt_money(montant_marche))
+    col2.metric("Avenants cumulés", fmt_money(total_avenants))
+    col3.metric("Montant actualisé", fmt_money(montant_actualise))
+    col4.metric("Décomptes versés", fmt_money(total_decomptes))
+
+    st.markdown("---")
+    tabs_d = st.tabs(["📋 Identification", "🏛️ Parties", "📅 Calendrier", "💰 Financier", "📝 Avenants", "🧾 Décomptes", "✅ Suivi"])
+
+    with tabs_d[0]:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"**N° Marché :** `{m.get('numMarche', '—')}`")
+            st.markdown(f"**N° AO :** `{m.get('numAO', '—') or '—'}`")
+            st.markdown(f"**Type :** {m.get('typeMarche', '—') or '—'}")
+        with col2:
+            st.markdown(f"**Mode passation :** {m.get('modePassation', '—') or '—'}")
+            st.markdown(f"**Portée :** {m.get('portee', '—') or '—'}")
+        st.markdown(f"**Objet :** {m.get('objetMarche', '—')}")
+
+    with tabs_d[1]:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"**Maître d'ouvrage :** {m.get('maitreOuvrage', '—') or '—'}")
+            st.markdown(f"**Organisme :** {m.get('organisme', '—') or '—'}")
+            st.markdown(f"**Maître d'œuvre :** {m.get('maitreOeuvre', '—') or '—'}")
+        with col2:
+            st.markdown(f"**Attributaire :** {m.get('attributaire', '—') or '—'}")
+            st.markdown(f"**Qualité :** {m.get('qualiteAttributaire', '—') or '—'}")
+
+    with tabs_d[2]:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"**Date lancement :** {fmt_date(m.get('dateLancement'))}")
+            st.markdown(f"**Ouverture des plis :** {fmt_date(m.get('dateOuverturePlis'))}")
+            st.markdown(f"**Notification :** {fmt_date(m.get('dateNotification'))}")
+            st.markdown(f"**Ordre de service :** {fmt_date(m.get('dateOrdreService'))}")
+            st.markdown(f"**Délai exécution :** {m.get('delaiExecution', '—') or '—'} jours")
+            st.markdown(f"**Date achèvement :** {fmt_date(m.get('dateAchevement'))}")
+        with col2:
+            st.markdown(f"**Commission ouverture plis :** {m.get('commissionOuverturePlis', '—') or '—'}")
+            st.markdown(f"**Date approbation :** {fmt_date(m.get('dateApprobation'))}")
+            st.markdown(f"**Réception provisoire :** {fmt_date(m.get('dateReceptionProv'))}")
+            st.markdown(f"**Réception définitive :** {fmt_date(m.get('dateReceptionDef'))}")
+            st.markdown(f"**Caution déf. constituée :** {fmt_date(m.get('dateConstitutionCautDef'))}")
+            st.markdown(f"**Mainlevée :** {fmt_date(m.get('dateMainlevee'))}")
+
+    with tabs_d[3]:
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Montant estimatif", fmt_money(m.get('montantEstimatif')))
+        col2.metric("Montant initial", fmt_money(m.get('montantMarche')))
+        col3.metric("Montant actualisé", fmt_money(montant_actualise))
+        col1.metric("Cautionnement prov.", fmt_money(m.get('cautionnementProv')))
+        col2.metric("Cautionnement déf.", fmt_money(m.get('cautionnementDef')))
+        col3.metric("Retenue de garantie", fmt_money(m.get('retenueGarantie')))
+        col1.metric("Avance forfaitaire", fmt_money(m.get('avanceForfaitaire')))
+        col2.metric("Taux pénalité", f"{m.get('tauxPenalite', '—')}‰/j")
+        col3.metric("Pénalités calculées", fmt_money(penalites) if penalites else "—")
+
+    with tabs_d[4]:
+        avs = m.get('avenants', [])
+        if avs:
+            df_av = pd.DataFrame(avs)
+            df_av.columns = ["N°", "Date", "Montant (DH)", "Objet"]
+            st.dataframe(df_av, use_container_width=True)
+            st.info(f"Total avenants : **{fmt_money(total_avenants)}**")
+        else:
+            st.info("Aucun avenant pour ce marché")
+
+    with tabs_d[5]:
+        dcs = m.get('decomptes', [])
+        if dcs:
+            df_dc = pd.DataFrame(dcs)
+            df_dc.columns = ["Type", "Date", "Montant (DH)"]
+            st.dataframe(df_dc, use_container_width=True)
+            st.info(f"Total décomptes : **{fmt_money(total_decomptes)}**")
+        else:
+            st.info("Aucun décompte pour ce marché")
+
+    with tabs_d[6]:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"**PV Réception prov. :** {m.get('pvReceptionProv', '—') or '—'}")
+            st.markdown(f"**PV Réception déf. :** {m.get('pvReceptionDef', '—') or '—'}")
+            st.markdown(f"**Délai garantie :** {m.get('delaiGarantie', '—')} mois")
+        with col2:
+            st.markdown(f"**Statut :** {statut_badge(m.get('statut'))}")
+            st.markdown(f"**Réserves :** {m.get('reservesALever', '—') or '—'}")
+            st.markdown(f"**Observations :** {m.get('observations', '—') or '—'}")
+
+# ═══════════════════════════════════════════════════════════
+# VUE: LISTE DES MARCHÉS
+# ═══════════════════════════════════════════════════════════
+else:
+    marches = st.session_state.marches
+
+    # ── RECHERCHE ──
+    search_col, export_col = st.columns([3, 1])
+    with search_col:
+        search_q = st.text_input("🔍 Rechercher", placeholder="N° marché, objet, attributaire, maître d'ouvrage...", label_visibility="collapsed")
+    with export_col:
+        export_btn = st.button("📥 Export Excel", use_container_width=True, disabled=len(marches) == 0)
+
+    # Export Excel
+    if export_btn and marches:
+        rows = []
+        for m in marches:
+            total_av = sum(float(a.get('montant', 0)) for a in m.get('avenants', []))
+            total_dc = sum(float(d.get('montant', 0)) for d in m.get('decomptes', []))
+            rows.append({
+                "N° Marché": m.get('numMarche'),
+                "N° AO": m.get('numAO'),
+                "Objet": m.get('objetMarche'),
+                "Type": m.get('typeMarche'),
+                "Mode passation": m.get('modePassation'),
+                "Portée": m.get('portee'),
+                "Maître d'ouvrage": m.get('maitreOuvrage'),
+                "Organisme": m.get('organisme'),
+                "Maître d'œuvre": m.get('maitreOeuvre'),
+                "Attributaire": m.get('attributaire'),
+                "Qualité attributaire": m.get('qualiteAttributaire'),
+                "Date lancement": m.get('dateLancement'),
+                "Date ouverture plis": m.get('dateOuverturePlis'),
+                "Date notification": m.get('dateNotification'),
+                "Date ordre de service": m.get('dateOrdreService'),
+                "Délai exécution (j)": m.get('delaiExecution'),
+                "Date achèvement": m.get('dateAchevement'),
+                "Commission ouverture plis": m.get('commissionOuverturePlis'),
+                "Date approbation": m.get('dateApprobation'),
+                "Date réception provisoire": m.get('dateReceptionProv'),
+                "Date réception définitive": m.get('dateReceptionDef'),
+                "Date constitution caution déf.": m.get('dateConstitutionCautDef'),
+                "Date mainlevée": m.get('dateMainlevee'),
+                "Montant estimatif (DH)": m.get('montantEstimatif'),
+                "Montant marché (DH)": m.get('montantMarche'),
+                "Cautionnement prov. (DH)": m.get('cautionnementProv'),
+                "Cautionnement déf. (DH)": m.get('cautionnementDef'),
+                "Retenue garantie (DH)": m.get('retenueGarantie'),
+                "Avance forfaitaire (DH)": m.get('avanceForfaitaire'),
+                "Taux pénalité (‰)": m.get('tauxPenalite'),
+                "Seuil résiliation (%)": m.get('seuilResiliation'),
+                "Nb avenants": len(m.get('avenants', [])),
+                "Total avenants (DH)": total_av,
+                "Nb décomptes": len(m.get('decomptes', [])),
+                "Total décomptes (DH)": total_dc,
+                "Statut": m.get('statut'),
+                "PV réception prov.": m.get('pvReceptionProv'),
+                "PV réception déf.": m.get('pvReceptionDef'),
+                "Délai garantie (mois)": m.get('delaiGarantie'),
+                "Observations": m.get('observations'),
+            })
+        df_export = pd.DataFrame(rows)
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+            df_export.to_excel(writer, index=False, sheet_name="Marchés")
+        buf.seek(0)
+        st.download_button(
+            label="⬇️ Télécharger Excel",
+            data=buf,
+            file_name=f"Marches_Publics_{date.today().isoformat()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    st.markdown("---")
+
+    # ── FILTRES RAPIDES ──
+    if marches:
+        statuts_dispo = list(set(m.get('statut', '') for m in marches if m.get('statut')))
+        filtre_statut = st.multiselect("Filtrer par statut", statuts_dispo, label_visibility="visible")
+
+    # ── LISTE ──
+    if not marches:
+        st.markdown("""
+        <div style='text-align:center; padding:60px 20px; color:#475569; background:#0f2044; border-radius:16px; border:1px dashed #1e3a5f'>
+            <div style='font-size:48px; margin-bottom:16px'>📂</div>
+            <div style='font-size:16px'>Aucun marché enregistré.</div>
+            <div style='font-size:13px; margin-top:8px'>Cliquez sur <b style='color:#38bdf8'>➕ Nouveau marché</b> pour commencer.</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        # Filtrage
+        filtered = marches
+        if search_q:
+            q = search_q.lower()
+            filtered = [m for m in filtered if
+                q in (m.get('numMarche', '') or '').lower() or
+                q in (m.get('numAO', '') or '').lower() or
+                q in (m.get('objetMarche', '') or '').lower() or
+                q in (m.get('attributaire', '') or '').lower() or
+                q in (m.get('maitreOuvrage', '') or '').lower()
+            ]
+        if 'filtre_statut' in dir() and filtre_statut:
+            filtered = [m for m in filtered if m.get('statut') in filtre_statut]
+
+        if not filtered:
+            st.warning(f"Aucun marché trouvé pour « {search_q} »")
+        else:
+            st.markdown(f"<small style='color:#475569'>{len(filtered)} marché(s) affiché(s)</small>", unsafe_allow_html=True)
+            for m in filtered:
+                total_av = sum(float(a.get('montant', 0)) for a in m.get('avenants', []))
+                montant_marche = float(m.get('montantMarche', 0))
+                c1, c2, c3 = st.columns([4, 2, 1])
+                with c1:
+                    st.markdown(f"""
+                    <div style='background:#0f2044; border:1px solid #1e3a5f; border-radius:14px; padding:14px 18px; margin-bottom:6px'>
+                        <div style='display:flex; align-items:center; gap:12px; margin-bottom:6px'>
+                            <span style='font-family:monospace; color:#38bdf8; font-size:14px; font-weight:700'>{m.get('numMarche', '')}</span>
+                            <span style='color:#475569; font-size:12px'>AO: {m.get('numAO', '') or '—'}</span>
+                            <span style='color:#64748b; font-size:11px'>{statut_badge(m.get('statut', ''))}</span>
+                        </div>
+                        <div style='color:#e2e8f0; font-size:13px; margin-bottom:4px'>{m.get('objetMarche', '—')}</div>
+                        <div style='color:#64748b; font-size:11px'>{m.get('attributaire', '') or '—'} · {m.get('maitreOuvrage', '') or '—'}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with c2:
+                    st.markdown(f"""
+                    <div style='text-align:right; padding-top:14px'>
+                        <div style='font-family:monospace; color:#fbbf24; font-size:14px; font-weight:700'>{fmt_money(montant_marche) if montant_marche else '—'}</div>
+                        {'<div style="color:#10b981; font-size:11px">+' + fmt_money(total_av) + ' (avenants)</div>' if total_av > 0 else ''}
+                    </div>
+                    """, unsafe_allow_html=True)
+                with c3:
+                    st.markdown("<div style='padding-top:18px'>", unsafe_allow_html=True)
+                    if st.button("👁️ Détails", key=f"view_{m['id']}", use_container_width=True):
+                        st.session_state.selected_marche = m
+                        st.session_state.view = "detail"
+                        st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
