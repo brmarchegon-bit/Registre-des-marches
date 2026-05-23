@@ -1,322 +1,377 @@
-import { useState, useRef, useEffect } from "react";
-import * as XLSX from "xlsx";
+import streamlit as st
+import pandas as pd
+from datetime import date, datetime
+import io
 
-// ─────────────────────────────────────────────────────────
-// CONSTANTS
-// ─────────────────────────────────────────────────────────
-const STEPS = [
-  { id: 1, label: "Identification",    icon: "📋" },
-  { id: 2, label: "Parties",           icon: "🏛️" },
-  { id: 3, label: "Calendrier",        icon: "📅" },
-  { id: 4, label: "Financier",         icon: "💰" },
-  { id: 5, label: "Avenants",          icon: "📝" },
-  { id: 6, label: "Décomptes",         icon: "🧾" },
-  { id: 7, label: "Suivi & Réception", icon: "✅" },
-];
+# ─── CONFIG ───
+st.set_page_config(
+    page_title="Registre des Marchés Publics",
+    page_icon="🏛️",
+    layout="wide"
+)
 
-const EMPTY_FORM = {
-  // Step 1
-  numMarche: "", numMarcheEdited: false,
-  numAO: "",     numAOEdited: false,
-  objetMarche: "", typeMarche: "", modePassation: "", portee: "",
-  // Step 2
-  maitreOuvrage: "", organisme: "", maitreOeuvre: "",
-  attributaire: "", qualiteAttributaire: "",
-  // Step 3 — ORDER CORRIGÉ: lancement → ouverturePlis → notification → ordreService → delai → achevement → commissionOuverture → approbation → receptionProv → receptionDef → cautDef → mainlevee
-  dateLancement: "",
-  dateOuverturePlis: "",
-  dateNotification: "",
-  dateOrdreService: "",
-  delaiExecution: "",
-  dateAchevement: "",
-  commissionOuverturePlis: "",   // NOUVEAU CHAMP
-  dateApprobation: "",            // DÉPLACÉ APRÈS achèvement + commission
-  dateReceptionProv: "",
-  dateReceptionDef: "",
-  dateConstitutionCautDef: "",
-  dateMainlevee: "",
-  // Step 4
-  montantEstimatif: "", montantMarche: "",
-  cautionnementProv: "", cautionnementDef: "",
-  retenueGarantie: "", avanceForfaitaire: "",
-  tauxPenalite: "1", seuilResiliation: "10",
-  // Step 5
-  avenants: [],
-  // Step 6
-  decomptes: [],
-  // Step 7
-  pvReceptionProv: "", pvReceptionDef: "",
-  reservesALever: "", delaiGarantie: "12",
-  statut: "", observations: "",
-};
+# ─── CSS ───
+st.markdown("""
+<style>
+    .main { background-color: #060f1e; }
+    .stApp { background-color: #060f1e; color: #e2e8f0; }
+    .block-container { padding-top: 1rem; }
+    h1, h2, h3 { color: #e2e8f0 !important; font-family: Georgia, serif; }
+    .stTextInput > div > div > input,
+    .stNumberInput > div > div > input,
+    .stDateInput > div > div > input,
+    .stSelectbox > div > div { background-color: #0f2044 !important; color: #e2e8f0 !important; border: 1px solid #1e3a5f !important; border-radius: 8px !important; }
+    .stTextArea > div > div > textarea { background-color: #0f2044 !important; color: #e2e8f0 !important; border: 1px solid #1e3a5f !important; }
+    .stButton > button { background: linear-gradient(135deg, #1e40af, #0ea5e9) !important; color: white !important; border: none !important; border-radius: 10px !important; font-weight: 600 !important; }
+    .stButton > button:hover { opacity: 0.85 !important; }
+    div[data-testid="metric-container"] { background-color: #0f2044; border: 1px solid #1e3a5f; border-radius: 12px; padding: 12px; }
+    .stDataFrame { background-color: #0f2044; }
+    label { color: #94a3b8 !important; font-size: 12px !important; text-transform: uppercase !important; letter-spacing: 0.5px !important; }
+    .stTabs [data-baseweb="tab"] { background-color: #0f2044; color: #94a3b8; border-radius: 8px 8px 0 0; }
+    .stTabs [aria-selected="true"] { background: linear-gradient(135deg, #1e40af, #0ea5e9) !important; color: white !important; }
+    .stSuccess { background-color: rgba(16,185,129,0.1) !important; border: 1px solid rgba(16,185,129,0.3) !important; }
+    .stWarning { background-color: rgba(251,191,36,0.1) !important; }
+    .stError { background-color: rgba(239,68,68,0.1) !important; }
+    .card { background: #0f2044; border: 1px solid #1e3a5f; border-radius: 14px; padding: 18px; margin-bottom: 12px; }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+    .badge-encours { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
+    .badge-cloture { background: rgba(16,185,129,0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
+    .badge-receptionne { background: rgba(59,130,246,0.15); color: #3b82f6; border: 1px solid rgba(59,130,246,0.3); }
+    .badge-resilie { background: rgba(239,68,68,0.15); color: #ef4444; border: 1px solid rgba(239,68,68,0.3); }
+    .marche-card { background: #0f2044; border: 1px solid #1e3a5f; border-radius: 14px; padding: 16px 20px; margin-bottom: 10px; cursor: pointer; transition: border-color 0.2s; }
+    .marche-card:hover { border-color: #3b82f6; }
+    .num-marche { font-family: monospace; color: #38bdf8; font-size: 15px; font-weight: 700; }
+    .montant { font-family: monospace; color: #fbbf24; font-size: 14px; font-weight: 700; }
+    .separator { border: none; border-top: 1px solid #1e3a5f; margin: 16px 0; }
+</style>
+""", unsafe_allow_html=True)
 
-function fmt(d) {
-  if (!d) return "—";
-  const [y, m, day] = d.split("-");
-  return `${day}/${m}/${y}`;
-}
-function money(v) {
-  if (!v && v !== 0) return "—";
-  return Number(v).toLocaleString("fr-MA") + " DH";
-}
-function daysBetween(a, b) {
-  if (!a || !b) return null;
-  return Math.round((new Date(b) - new Date(a)) / 86400000);
-}
+# ─── SESSION STATE ───
+if "marches" not in st.session_state:
+    st.session_state.marches = []
+if "view" not in st.session_state:
+    st.session_state.view = "liste"
+if "selected_marche" not in st.session_state:
+    st.session_state.selected_marche = None
 
-// ─────────────────────────────────────────────────────────
-// LOCKED FIELD COMPONENT
-// ─────────────────────────────────────────────────────────
-function LockedField({ label, fieldKey, value, locked, onBlur, onChange, placeholder, error }) {
-  const inputStyle = {
-    width: "100%", background: locked ? "#0d1f3c" : "#0f2044",
-    border: `1px solid ${error ? "#ef4444" : locked ? "#1e40af" : "#1e3a5f"}`,
-    borderRadius: "10px", padding: "11px 14px", color: locked ? "#38bdf8" : "#e2e8f0",
-    fontSize: "14px", outline: "none",
-    fontFamily: "'IBM Plex Mono',monospace", boxSizing: "border-box",
-    cursor: locked ? "not-allowed" : "text",
-    paddingRight: locked ? "120px" : "14px",
-  };
-  return (
-    <div>
-      <label style={{ color: "#64748b", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: "6px", display: "block" }}>{label} *</label>
-      <div style={{ position: "relative" }}>
-        <input
-          value={value}
-          onChange={e => !locked && onChange(fieldKey, e.target.value)}
-          onBlur={() => !locked && value.trim() && onBlur(fieldKey)}
-          readOnly={locked}
-          placeholder={locked ? "" : placeholder}
-          style={inputStyle}
-        />
-        {locked && (
-          <div style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", fontSize: "10px", color: "#ef4444", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", padding: "2px 8px", borderRadius: "20px", display: "flex", alignItems: "center", gap: "4px" }}>
-            🔒 VERROUILLÉ
-          </div>
-        )}
-      </div>
-      {!locked && value.trim() && <div style={{ color: "#f59e0b", fontSize: "11px", marginTop: "4px" }}>⚠ Quittez le champ pour verrouiller définitivement</div>}
-      {!locked && !value.trim() && <div style={{ color: "#475569", fontSize: "11px", marginTop: "4px" }}>Saisissez puis quittez le champ — verrouillage définitif</div>}
-      {error && <div style={{ color: "#ef4444", fontSize: "11px", marginTop: "4px" }}>● {error}</div>}
-    </div>
-  );
-}
+# ─── HELPERS ───
+def fmt_date(d):
+    if not d:
+        return "—"
+    if isinstance(d, str) and d:
+        try:
+            dt = datetime.strptime(d, "%Y-%m-%d")
+            return dt.strftime("%d/%m/%Y")
+        except:
+            return d
+    if hasattr(d, "strftime"):
+        return d.strftime("%d/%m/%Y")
+    return "—"
 
-// ─────────────────────────────────────────────────────────
-// LOCK MODAL
-// ─────────────────────────────────────────────────────────
-function LockModal({ fieldLabel, value, onConfirm, onCancel }) {
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)", zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ background: "#0a1628", border: "1px solid #d97706", borderRadius: "18px", padding: "36px", maxWidth: "420px", width: "90%", boxShadow: "0 20px 60px rgba(0,0,0,0.7)" }}>
-        <div style={{ fontSize: "40px", textAlign: "center", marginBottom: "14px" }}>⚠️</div>
-        <div style={{ fontFamily: "'Playfair Display',serif", color: "#fbbf24", fontSize: "18px", fontWeight: 700, textAlign: "center", marginBottom: "12px" }}>Action irréversible</div>
-        <div style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.15)", borderRadius: "10px", padding: "14px", marginBottom: "18px", textAlign: "center" }}>
-          <div style={{ color: "#64748b", fontSize: "11px", marginBottom: "4px" }}>{fieldLabel}</div>
-          <div style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#38bdf8", fontSize: "16px", fontWeight: 700 }}>{value}</div>
-        </div>
-        <div style={{ color: "#94a3b8", fontSize: "13px", textAlign: "center", lineHeight: "1.8", marginBottom: "22px" }}>
-          Ce champ sera <strong style={{ color: "#ef4444" }}>définitivement verrouillé</strong>.<br />Aucune modification ne sera possible après confirmation.
-        </div>
-        <div style={{ display: "flex", gap: "12px" }}>
-          <button onClick={onCancel} style={{ flex: 1, background: "#1e3a5f", border: "none", borderRadius: "10px", padding: "13px", color: "#94a3b8", cursor: "pointer", fontSize: "13px" }}>Annuler</button>
-          <button onClick={onConfirm} style={{ flex: 1, background: "linear-gradient(135deg,#d97706,#f59e0b)", border: "none", borderRadius: "10px", padding: "13px", color: "white", cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>✓ Confirmer le verrouillage</button>
-        </div>
-      </div>
-    </div>
-  );
-}
+def fmt_money(v):
+    if not v and v != 0:
+        return "—"
+    try:
+        return f"{float(v):,.2f} DH".replace(",", " ")
+    except:
+        return "—"
 
-// ─────────────────────────────────────────────────────────
-// SEARCH MODAL
-// ─────────────────────────────────────────────────────────
-function SearchModal({ marches, onClose, onView }) {
-  const [q, setQ] = useState("");
-  const [results, setResults] = useState([]);
-  const [searched, setSearched] = useState(false);
-  const ref = useRef();
-  useEffect(() => { ref.current?.focus(); }, []);
+def days_between(a, b):
+    if not a or not b:
+        return None
+    try:
+        if isinstance(a, str):
+            a = datetime.strptime(a, "%Y-%m-%d").date()
+        if isinstance(b, str):
+            b = datetime.strptime(b, "%Y-%m-%d").date()
+        return (b - a).days
+    except:
+        return None
 
-  function doSearch() {
-    const t = q.trim().toLowerCase();
-    if (!t) return;
-    setResults(marches.filter(m =>
-      m.numMarche.toLowerCase().includes(t) ||
-      m.numAO.toLowerCase().includes(t) ||
-      m.objetMarche.toLowerCase().includes(t) ||
-      m.attributaire.toLowerCase().includes(t) ||
-      m.maitreOuvrage.toLowerCase().includes(t)
-    ));
-    setSearched(true);
-  }
+def statut_badge(statut):
+    colors = {
+        "En cours": ("🟡", "#f59e0b"),
+        "Clôturé": ("🟢", "#10b981"),
+        "Réceptionné": ("🔵", "#3b82f6"),
+        "Résilié": ("🔴", "#ef4444"),
+    }
+    icon, _ = colors.get(statut, ("⚪", "#64748b"))
+    return f"{icon} {statut}" if statut else "—"
 
-  const SC = { "En cours": "#f59e0b", "Clôturé": "#10b981", "Réceptionné": "#3b82f6", "Résilié": "#ef4444" };
+# ─── HEADER ───
+col1, col2, col3 = st.columns([3, 1, 1])
+with col1:
+    st.markdown("## 🏛️ Registre des Marchés Publics")
+    st.markdown("<small style='color:#475569'>Établissement Public — Gestion & Suivi</small>", unsafe_allow_html=True)
+with col2:
+    nb = len(st.session_state.marches)
+    st.metric("Marchés enregistrés", nb)
+with col3:
+    if st.session_state.view == "liste":
+        if st.button("➕ Nouveau marché", use_container_width=True):
+            st.session_state.view = "formulaire"
+            st.session_state.selected_marche = None
+            st.rerun()
+    else:
+        if st.button("📋 Voir la liste", use_container_width=True):
+            st.session_state.view = "liste"
+            st.rerun()
 
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,16,40,0.88)", backdropFilter: "blur(8px)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
-      <div style={{ background: "#0a1628", border: "1px solid #1e3a5f", borderRadius: "20px", width: "100%", maxWidth: "700px", maxHeight: "90vh", overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        <div style={{ padding: "24px 28px 18px", borderBottom: "1px solid #1e3a5f", display: "flex", alignItems: "center", gap: "14px" }}>
-          <div style={{ width: "42px", height: "42px", borderRadius: "11px", background: "linear-gradient(135deg,#1e40af,#0ea5e9)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "18px" }}>🔍</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ color: "#e2e8f0", fontFamily: "'Playfair Display',serif", fontSize: "17px", fontWeight: 700 }}>Rechercher un Marché</div>
-            <div style={{ color: "#64748b", fontSize: "12px" }}>N° Marché, N° AO, objet, attributaire, maître d'ouvrage</div>
-          </div>
-          <button onClick={onClose} style={{ background: "#1e3a5f", border: "none", color: "#94a3b8", width: "34px", height: "34px", borderRadius: "9px", cursor: "pointer", fontSize: "16px" }}>✕</button>
-        </div>
-        <div style={{ padding: "16px 28px", borderBottom: "1px solid #1e3a5f", display: "flex", gap: "10px" }}>
-          <input ref={ref} value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && doSearch()} placeholder="Tapez votre recherche..." style={{ flex: 1, background: "#0f2044", border: "1px solid #1e3a5f", borderRadius: "10px", padding: "10px 14px", color: "#e2e8f0", fontSize: "14px", fontFamily: "'IBM Plex Mono',monospace", outline: "none" }} />
-          <button onClick={doSearch} style={{ background: "linear-gradient(135deg,#1e40af,#0ea5e9)", border: "none", borderRadius: "10px", padding: "10px 22px", color: "white", fontWeight: 600, cursor: "pointer", fontSize: "14px" }}>Chercher</button>
-        </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "16px 28px 24px" }}>
-          {!searched && <div style={{ textAlign: "center", color: "#475569", padding: "36px 0", fontSize: "13px" }}>Entrez un terme de recherche</div>}
-          {searched && results.length === 0 && <div style={{ textAlign: "center", color: "#ef4444", padding: "36px 0", fontSize: "13px", background: "rgba(239,68,68,0.05)", borderRadius: "10px", border: "1px solid rgba(239,68,68,0.15)" }}>❌ Aucun marché trouvé pour « {q} »</div>}
-          {results.map(r => (
-            <div key={r.id} onClick={() => { onView(r); onClose(); }}
-              style={{ background: "#0f2044", border: "1px solid #1e3a5f", borderRadius: "12px", padding: "14px 18px", marginBottom: "10px", cursor: "pointer", transition: "all 0.2s" }}
-              onMouseEnter={e => e.currentTarget.style.borderColor = "#3b82f6"}
-              onMouseLeave={e => e.currentTarget.style.borderColor = "#1e3a5f"}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                <div style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#38bdf8", fontSize: "13px", fontWeight: 700 }}>{r.numMarche}</div>
-                {r.statut && <div style={{ background: `${SC[r.statut] || "#64748b"}18`, border: `1px solid ${SC[r.statut] || "#64748b"}40`, color: SC[r.statut] || "#64748b", padding: "2px 9px", borderRadius: "20px", fontSize: "11px" }}>{r.statut}</div>}
-              </div>
-              <div style={{ color: "#e2e8f0", fontSize: "13px", marginBottom: "4px" }}>{r.objetMarche || "—"}</div>
-              <div style={{ color: "#64748b", fontSize: "11px" }}>AO: {r.numAO || "—"} · {r.maitreOuvrage || "—"}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+st.markdown("<hr style='border:1px solid #1e3a5f;margin:8px 0 20px 0'>", unsafe_allow_html=True)
 
-// ─────────────────────────────────────────────────────────
-// DETAIL MODAL (avec boutons modifier pour champs vides)
-// ─────────────────────────────────────────────────────────
-function DetailModal({ marche: m, onClose, onUpdate }) {
-  const SC = { "En cours": "#f59e0b", "Clôturé": "#10b981", "Réceptionné": "#3b82f6", "Résilié": "#ef4444" };
-  const color = SC[m.statut] || "#64748b";
+# ═══════════════════════════════════════════════════════════
+# VUE: FORMULAIRE NOUVEAU MARCHÉ
+# ═══════════════════════════════════════════════════════════
+if st.session_state.view == "formulaire":
+    st.markdown("### 📝 Enregistrement d'un nouveau marché")
 
-  const [editField, setEditField] = useState(null);
-  const [editValue, setEditValue] = useState("");
+    tabs = st.tabs([
+        "📋 Identification",
+        "🏛️ Parties",
+        "📅 Calendrier",
+        "💰 Financier",
+        "📝 Avenants",
+        "🧾 Décomptes",
+        "✅ Suivi & Réception"
+    ])
 
-  const retard = daysBetween(m.dateAchevement, m.dateReceptionProv);
-  const retardPositif = retard !== null && retard > 0 ? retard : 0;
-  const penalites = retardPositif && m.montantMarche && m.tauxPenalite
-    ? (retardPositif * (Number(m.tauxPenalite) / 1000) * Number(m.montantMarche)).toFixed(2) : null;
-  const seuilAlert = m.montantMarche && penalites
-    ? (Number(penalites) / Number(m.montantMarche) * 100).toFixed(2) : null;
-  const totalAvenants = m.avenants?.reduce((s, a) => s + Number(a.montant || 0), 0) || 0;
-  const totalDecomptes = m.decomptes?.reduce((s, d) => s + Number(d.montant || 0), 0) || 0;
-  const montantActualise = Number(m.montantMarche || 0) + totalAvenants;
+    # ── TAB 1: IDENTIFICATION ──
+    with tabs[0]:
+        st.markdown("#### Identification du marché")
+        c1, c2 = st.columns(2)
+        with c1:
+            num_marche = st.text_input("N° Marché *", placeholder="Ex: 01/2024/EP", key="num_marche")
+        with c2:
+            num_ao = st.text_input("N° Appel d'Offres", placeholder="Ex: AO-14/2024", key="num_ao")
+        objet = st.text_area("Objet du marché *", placeholder="Description complète de l'objet du marché", key="objet", height=100)
+        c3, c4, c5 = st.columns(3)
+        with c3:
+            type_marche = st.selectbox("Type de marché", ["", "Travaux", "Fournitures", "Services", "Études"], key="type_marche")
+        with c4:
+            mode_passation = st.selectbox("Mode de passation", ["", "Appel d'offres ouvert", "Appel d'offres restreint", "Bon de commande", "Concours", "Gré à gré", "Marché négocié"], key="mode_passation")
+        with c5:
+            portee = st.selectbox("Portée", ["", "National", "International", "Régional"], key="portee")
 
-  function openEdit(field, currentVal) {
-    setEditField(field);
-    setEditValue(currentVal || "");
-  }
-  function saveEdit() {
-    if (!editField) return;
-    onUpdate({ ...m, [editField]: editValue });
-    setEditField(null);
-  }
+    # ── TAB 2: PARTIES ──
+    with tabs[1]:
+        st.markdown("#### Parties contractantes")
+        c1, c2 = st.columns(2)
+        with c1:
+            maitre_ouvrage = st.text_input("Maître d'ouvrage", placeholder="Nom de l'établissement", key="maitre_ouvrage")
+            maitre_oeuvre = st.text_input("Maître d'œuvre", placeholder="Bureau d'études ou ingénieur", key="maitre_oeuvre")
+            qualite_attributaire = st.selectbox("Qualité de l'attributaire", ["", "Entreprise nationale", "Entreprise étrangère", "Groupement d'entreprises", "Personne physique"], key="qualite_attributaire")
+        with c2:
+            organisme = st.text_input("Organisme / Division", placeholder="Direction concernée", key="organisme")
+            attributaire = st.text_input("Attributaire", placeholder="Nom de l'entreprise titulaire", key="attributaire")
 
-  // Rendu d'une ligne avec bouton "Compléter" si vide
-  const Row = ({ label, value, rawKey, highlight, isDate }) => {
-    const isEmpty = !value || value === "—";
-    return (
-      <div style={{ display: "flex", padding: "9px 18px", borderBottom: "1px solid rgba(30,58,95,0.4)", alignItems: "center" }}>
-        <div style={{ color: "#475569", fontSize: "11px", width: "200px", flexShrink: 0, textTransform: "uppercase", letterSpacing: "0.5px" }}>{label}</div>
-        <div style={{ color: highlight || "#e2e8f0", fontSize: "13px", flex: 1 }}>{value || "—"}</div>
-        {isEmpty && rawKey && (
-          <button onClick={() => openEdit(rawKey, "")}
-            style={{ background: "rgba(14,165,233,0.12)", border: "1px solid rgba(14,165,233,0.3)", color: "#38bdf8", borderRadius: "7px", padding: "3px 10px", fontSize: "11px", cursor: "pointer", whiteSpace: "nowrap", marginLeft: "8px" }}>
-            + Compléter
-          </button>
-        )}
-      </div>
-    );
-  };
+    # ── TAB 3: CALENDRIER ──
+    with tabs[2]:
+        st.markdown("#### Calendrier du marché")
+        st.info("📌 Ordre conforme aux décrets : Lancement → Ouverture des plis → Notification → OS → Achèvement → Commission → Approbation → Réception prov. → Réception déf.")
+        c1, c2 = st.columns(2)
+        with c1:
+            date_lancement = st.date_input("Date de lancement", value=None, key="date_lancement")
+            date_notification = st.date_input("Date de notification", value=None, key="date_notification")
+            delai_execution = st.number_input("Délai d'exécution (jours)", min_value=0, value=0, key="delai_execution")
+            commission_ouverture = st.text_input("Commission d'ouverture des plis (membres / N° PV)", key="commission_ouverture")
+            date_reception_prov = st.date_input("Date réception provisoire", value=None, key="date_reception_prov")
+            date_constitution_caut = st.date_input("Date constitution caution déf.", value=None, key="date_constitution_caut")
+        with c2:
+            date_ouverture_plis = st.date_input("Date d'ouverture des plis", value=None, key="date_ouverture_plis")
+            date_ordre_service = st.date_input("Date ordre de service", value=None, key="date_ordre_service")
+            date_achevement = st.date_input("Date d'achèvement", value=None, key="date_achevement")
+            date_approbation = st.date_input("Date d'approbation", value=None, key="date_approbation")
+            date_reception_def = st.date_input("Date réception définitive", value=None, key="date_reception_def")
+            date_mainlevee = st.date_input("Date mainlevée", value=None, key="date_mainlevee")
 
-  const Section = ({ title, icon, children }) => (
-    <div style={{ background: "#0f2044", borderRadius: "14px", border: "1px solid #1e3a5f", overflow: "hidden", marginBottom: "16px" }}>
-      <div style={{ padding: "11px 18px", borderBottom: "1px solid #1e3a5f", display: "flex", alignItems: "center", gap: "8px", background: "rgba(30,64,175,0.1)" }}>
-        <span>{icon}</span>
-        <span style={{ color: "#93c5fd", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "1px" }}>{title}</span>
-      </div>
-      {children}
-    </div>
-  );
+    # ── TAB 4: FINANCIER ──
+    with tabs[3]:
+        st.markdown("#### Situation financière")
+        c1, c2 = st.columns(2)
+        with c1:
+            montant_estimatif = st.number_input("Montant estimatif (DH)", min_value=0.0, value=0.0, format="%.2f", key="montant_estimatif")
+            cautionnement_prov = st.number_input("Cautionnement provisoire (DH)", min_value=0.0, value=0.0, format="%.2f", key="cautionnement_prov")
+            retenue_garantie = st.number_input("Retenue de garantie (DH)", min_value=0.0, value=0.0, format="%.2f", key="retenue_garantie")
+            taux_penalite = st.number_input("Taux de pénalité (‰/jour)", min_value=0.0, value=1.0, format="%.2f", key="taux_penalite")
+        with c2:
+            montant_marche = st.number_input("Montant du marché (DH)", min_value=0.0, value=0.0, format="%.2f", key="montant_marche")
+            cautionnement_def = st.number_input("Cautionnement définitif (DH)", min_value=0.0, value=0.0, format="%.2f", key="cautionnement_def")
+            avance_forfaitaire = st.number_input("Avance forfaitaire (DH)", min_value=0.0, value=0.0, format="%.2f", key="avance_forfaitaire")
+            seuil_resiliation = st.number_input("Seuil de résiliation (%)", min_value=0.0, value=10.0, format="%.1f", key="seuil_resiliation")
 
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,16,40,0.9)", backdropFilter: "blur(8px)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
-      <div style={{ background: "#0a1628", border: "1px solid #1e3a5f", borderRadius: "20px", width: "100%", maxWidth: "860px", maxHeight: "94vh", overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        <div style={{ padding: "22px 28px", borderBottom: "1px solid #1e3a5f", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#38bdf8", fontSize: "12px", letterSpacing: "1.5px", marginBottom: "4px" }}>
-              {m.numMarche} {m.numAO ? `· AO: ${m.numAO}` : ""}
-            </div>
-            <div style={{ fontFamily: "'Playfair Display',serif", color: "#e2e8f0", fontSize: "19px", fontWeight: 700 }}>{m.objetMarche || "Détails du marché"}</div>
-          </div>
-          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-            {m.statut && <div style={{ background: `${color}18`, border: `1px solid ${color}40`, color, padding: "4px 13px", borderRadius: "20px", fontSize: "12px", fontWeight: 600 }}>{m.statut}</div>}
-            <button onClick={onClose} style={{ background: "#1e3a5f", border: "none", color: "#94a3b8", width: "34px", height: "34px", borderRadius: "9px", cursor: "pointer", fontSize: "16px" }}>✕</button>
-          </div>
-        </div>
+    # ── TAB 5: AVENANTS ──
+    with tabs[4]:
+        st.markdown("#### Avenants")
+        if "avenants_temp" not in st.session_state:
+            st.session_state.avenants_temp = []
 
-        <div style={{ flex: 1, overflowY: "auto", padding: "22px 28px" }}>
-          {/* BANDEAU INFO suivi */}
-          <div style={{ background: "rgba(14,165,233,0.06)", border: "1px solid rgba(14,165,233,0.2)", borderRadius: "10px", padding: "10px 16px", marginBottom: "16px", fontSize: "12px", color: "#7dd3fc", display: "flex", alignItems: "center", gap: "8px" }}>
-            <span>ℹ️</span>
-            <span>Les champs non renseignés peuvent être complétés au fil de l'avancement du marché. Cliquez sur <strong>+ Compléter</strong> pour renseigner un champ vide.</span>
-          </div>
+        with st.expander("➕ Ajouter un avenant", expanded=True):
+            ca1, ca2, ca3, ca4 = st.columns([1, 2, 2, 3])
+            with ca1:
+                av_num = st.text_input("N°", key="av_num")
+            with ca2:
+                av_date = st.date_input("Date", value=None, key="av_date")
+            with ca3:
+                av_montant = st.number_input("Montant (DH)", min_value=0.0, value=0.0, format="%.2f", key="av_montant")
+            with ca4:
+                av_objet = st.text_input("Objet", key="av_objet")
+            if st.button("✚ Ajouter l'avenant"):
+                if av_montant > 0 or av_objet:
+                    st.session_state.avenants_temp.append({
+                        "numero": av_num, "date": str(av_date) if av_date else "",
+                        "montant": av_montant, "objet": av_objet
+                    })
+                    st.success("Avenant ajouté !")
+                    st.rerun()
 
-          {seuilAlert && Number(seuilAlert) >= 8 && (
-            <div style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "12px", padding: "14px 18px", marginBottom: "16px", display: "flex", gap: "12px", alignItems: "center" }}>
-              <span style={{ fontSize: "20px" }}>🚨</span>
-              <div>
-                <div style={{ color: "#ef4444", fontWeight: 700, fontSize: "13px" }}>Alerte pénalités — {seuilAlert}% du montant marché</div>
-                <div style={{ color: "#94a3b8", fontSize: "12px", marginTop: "2px" }}>Seuil résiliation : {m.seuilResiliation || 10}% — Pénalités cumulées : {money(penalites)}</div>
-              </div>
-            </div>
-          )}
+        if st.session_state.avenants_temp:
+            st.markdown("**Avenants saisis :**")
+            for i, av in enumerate(st.session_state.avenants_temp):
+                col_a, col_b, col_c, col_d, col_e = st.columns([1, 2, 2, 3, 1])
+                col_a.write(f"Av.{av['numero'] or i+1}")
+                col_b.write(fmt_date(av['date']))
+                col_c.write(fmt_money(av['montant']))
+                col_d.write(av['objet'] or "—")
+                if col_e.button("✕", key=f"del_av_{i}"):
+                    st.session_state.avenants_temp.pop(i)
+                    st.rerun()
+        else:
+            st.info("Aucun avenant pour ce marché")
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-            <div>
-              <Section title="Identification" icon="📋">
-                <Row label="N° Marché" value={m.numMarche} />
-                <Row label="N° AO" value={m.numAO} />
-                <Row label="Objet" value={m.objetMarche} />
-                <Row label="Type" value={m.typeMarche} rawKey="typeMarche" />
-                <Row label="Mode passation" value={m.modePassation} rawKey="modePassation" />
-                <Row label="Portée" value={m.portee} rawKey="portee" />
-              </Section>
-              <Section title="Parties" icon="🏛️">
-                <Row label="Maître d'ouvrage" value={m.maitreOuvrage} rawKey="maitreOuvrage" />
-                <Row label="Organisme" value={m.organisme} rawKey="organisme" />
-                <Row label="Maître d'œuvre" value={m.maitreOeuvre} rawKey="maitreOeuvre" />
-                <Row label="Attributaire" value={m.attributaire} rawKey="attributaire" />
-                <Row label="Qualité" value={m.qualiteAttributaire} rawKey="qualiteAttributaire" />
-              </Section>
-            </div>
-            <div>
-              {/* CALENDRIER — ordre corrigé */}
-              <Section title="Calendrier" icon="📅">
-                <Row label="Date lancement" value={fmt(m.dateLancement)} rawKey="dateLancement" />
-                <Row label="Ouverture des plis" value={fmt(m.dateOuverturePlis)} rawKey="dateOuverturePlis" />
-                <Row label="Notification" value={fmt(m.dateNotification)} rawKey="dateNotification" />
-                <Row label="Ordre de service" value={fmt(m.dateOrdreService)} rawKey="dateOrdreService" />
-                <Row label="Délai exécution (j)" value={m.delaiExecution ? m.delaiExecution + " jours" : null} rawKey="delaiExecution" />
-                <Row label="Date achèvement" value={fmt(m.dateAchevement)} rawKey="dateAchevement" />
-                <Row label="Commission ouverture plis" value={m.commissionOuverturePlis} rawKey="commissionOuverturePlis" />
-                <Row label="Date approbation" value={fmt(m.dateApprobation)} rawKey="dateApprobation" />
-                <Row label="Réception provisoire" value={fmt(m.dateReceptionProv)} rawKey="dateReceptionProv" />
-                <Row label="Réception définitive" value={fmt(m.dateReceptionDef)} rawKey="dateReceptionDef" />
-                <Row label="Caution déf. constituée" value={fmt(m.dateConstitutionCautDef)} rawKey="dateConstitutionCautDef" />
-                <Row label="Mainlevée" value={fmt(m.dateMainlevee)} rawKey="dateMainlevee" />
-              </Section>
-            </div>
-          </div>
+    # ── TAB 6: DÉCOMPTES ──
+    with tabs[5]:
+        st.markdown("#### Décomptes")
+        if "decomptes_temp" not in st.session_state:
+            st.session_state.decomptes_temp = []
 
-          <Section title="Situation Financière" icon="💰">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr" }}>
-              {[
-                ["Montant estimatif", money(m.montan
+        with st.expander("➕ Ajouter un décompte", expanded=True):
+            cd1, cd2, cd3 = st.columns([2, 2, 2])
+            with cd1:
+                dc_type = st.selectbox("Type", ["Provisoire", "Définitif"], key="dc_type")
+            with cd2:
+                dc_date = st.date_input("Date", value=None, key="dc_date")
+            with cd3:
+                dc_montant = st.number_input("Montant (DH)", min_value=0.0, value=0.0, format="%.2f", key="dc_montant")
+            if st.button("✚ Ajouter le décompte"):
+                if dc_montant > 0:
+                    st.session_state.decomptes_temp.append({
+                        "type": dc_type, "date": str(dc_date) if dc_date else "",
+                        "montant": dc_montant
+                    })
+                    st.success("Décompte ajouté !")
+                    st.rerun()
+
+        if st.session_state.decomptes_temp:
+            st.markdown("**Décomptes saisis :**")
+            for i, dc in enumerate(st.session_state.decomptes_temp):
+                col_a, col_b, col_c, col_d = st.columns([2, 2, 2, 1])
+                col_a.write(f"{'DGD' if dc['type'] == 'Définitif' else f'D.Prov. N°{i+1}'}")
+                col_b.write(fmt_date(dc['date']))
+                col_c.write(fmt_money(dc['montant']))
+                if col_d.button("✕", key=f"del_dc_{i}"):
+                    st.session_state.decomptes_temp.pop(i)
+                    st.rerun()
+        else:
+            st.info("Aucun décompte pour ce marché")
+
+    # ── TAB 7: SUIVI ──
+    with tabs[6]:
+        st.markdown("#### Suivi & Réception")
+        c1, c2 = st.columns(2)
+        with c1:
+            pv_reception_prov = st.text_input("N° PV Réception provisoire", placeholder="Ex: PV-001/2024", key="pv_reception_prov")
+            reserves = st.text_area("Réserves à lever", key="reserves", height=100)
+            statut = st.selectbox("Statut du marché", ["", "En cours", "Clôturé", "Réceptionné", "Résilié"], key="statut")
+        with c2:
+            pv_reception_def = st.text_input("N° PV Réception définitive", placeholder="Ex: PV-002/2024", key="pv_reception_def")
+            delai_garantie = st.number_input("Délai de garantie (mois)", min_value=0, value=12, key="delai_garantie")
+            observations = st.text_area("Observations", key="observations", height=100)
+
+    # ── BOUTON ENREGISTRER ──
+    st.markdown("---")
+    col_save1, col_save2, col_save3 = st.columns([2, 1, 2])
+    with col_save2:
+        if st.button("✅ Enregistrer le marché", use_container_width=True, type="primary"):
+            if not st.session_state.get("num_marche"):
+                st.error("⚠️ Le numéro de marché est obligatoire !")
+            elif not st.session_state.get("objet"):
+                st.error("⚠️ L'objet du marché est obligatoire !")
+            else:
+                def to_str(d):
+                    return str(d) if d else ""
+
+                new_marche = {
+                    "id": int(datetime.now().timestamp() * 1000),
+                    "numMarche": st.session_state.num_marche,
+                    "numAO": st.session_state.num_ao,
+                    "objetMarche": st.session_state.objet,
+                    "typeMarche": st.session_state.type_marche,
+                    "modePassation": st.session_state.mode_passation,
+                    "portee": st.session_state.portee,
+                    "maitreOuvrage": st.session_state.maitre_ouvrage,
+                    "organisme": st.session_state.organisme,
+                    "maitreOeuvre": st.session_state.maitre_oeuvre,
+                    "attributaire": st.session_state.attributaire,
+                    "qualiteAttributaire": st.session_state.qualite_attributaire,
+                    "dateLancement": to_str(st.session_state.date_lancement),
+                    "dateOuverturePlis": to_str(st.session_state.date_ouverture_plis),
+                    "dateNotification": to_str(st.session_state.date_notification),
+                    "dateOrdreService": to_str(st.session_state.date_ordre_service),
+                    "delaiExecution": st.session_state.delai_execution,
+                    "dateAchevement": to_str(st.session_state.date_achevement),
+                    "commissionOuverturePlis": st.session_state.commission_ouverture,
+                    "dateApprobation": to_str(st.session_state.date_approbation),
+                    "dateReceptionProv": to_str(st.session_state.date_reception_prov),
+                    "dateReceptionDef": to_str(st.session_state.date_reception_def),
+                    "dateConstitutionCautDef": to_str(st.session_state.date_constitution_caut),
+                    "dateMainlevee": to_str(st.session_state.date_mainlevee),
+                    "montantEstimatif": st.session_state.montant_estimatif,
+                    "montantMarche": st.session_state.montant_marche,
+                    "cautionnementProv": st.session_state.cautionnement_prov,
+                    "cautionnementDef": st.session_state.cautionnement_def,
+                    "retenueGarantie": st.session_state.retenue_garantie,
+                    "avanceForfaitaire": st.session_state.avance_forfaitaire,
+                    "tauxPenalite": st.session_state.taux_penalite,
+                    "seuilResiliation": st.session_state.seuil_resiliation,
+                    "avenants": list(st.session_state.avenants_temp),
+                    "decomptes": list(st.session_state.decomptes_temp),
+                    "pvReceptionProv": st.session_state.pv_reception_prov,
+                    "pvReceptionDef": st.session_state.pv_reception_def,
+                    "reservesALever": st.session_state.reserves,
+                    "delaiGarantie": st.session_state.delai_garantie,
+                    "statut": st.session_state.statut,
+                    "observations": st.session_state.observations,
+                }
+                st.session_state.marches.append(new_marche)
+                st.session_state.avenants_temp = []
+                st.session_state.decomptes_temp = []
+                st.session_state.view = "liste"
+                st.success("✅ Marché enregistré avec succès !")
+                st.rerun()
+
+# ═══════════════════════════════════════════════════════════
+# VUE: DÉTAIL D'UN MARCHÉ
+# ═══════════════════════════════════════════════════════════
+elif st.session_state.view == "detail":
+    m = st.session_state.selected_marche
+    if not m:
+        st.session_state.view = "liste"
+        st.rerun()
+
+    if st.button("← Retour à la liste"):
+        st.session_state.view = "liste"
+        st.session_state.selected_marche = None
+        st.rerun()
+
+    st.markdown(f"### 🏛️ {m.get('numMarche', '')} — {m.get('objetMarche', '')}")
+    if m.get('statut'):
+        st.markdown(f"**Statut :** {statut_badge(m.get('statut'))}")
+
+    # Calculs
+    total_avenants = sum(float(a.get('montant', 0)) for a in m.get('avenants', []))
+    total_decomptes = sum(float(d.get('montant', 0)) for d in m.get('decomptes', []))
+    montant_marche = float(m.get('montantMarche', 0))
+    montant_actualise = montant_marche + total_avenants
+    retard = days_between(m.get('dateAchevement'), m.get('dateReceptionProv'))
+    retard_positif = max(0, retard) if retard else 0
+    penalites = retard_positif * (float(m.get('tauxPenalite', 1)) / 1000) * montant_marche i
